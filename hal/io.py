@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable
-import narwhals as nw
 import yaml
 
 from hal.utils import clean_types
@@ -13,6 +12,7 @@ from hal.utils import clean_types
 if TYPE_CHECKING:
     import pandas as pd  # type: ignore
     import polars as pl  # type: ignore
+    import narwhals as nw  # type: ignore
     from matplotlib.figure import Figure  # type: ignore
     from smitfit.fitresult import FitResult  # type: ignore
 
@@ -81,6 +81,8 @@ def save_and_close(
 
 
 def save_csv(df: pl.DataFrame | pd.DataFrame | nw.DataFrame, file_path: Path):
+    import narwhals as nw
+
     nw.from_native(df).write_csv(file_path)
 
 
