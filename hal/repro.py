@@ -1,3 +1,4 @@
+import atexit
 import distutils.sysconfig as sysconfig
 import importlib
 import pkgutil
@@ -13,6 +14,29 @@ import warnings
 import watermark
 
 from hal.config import cfg
+
+
+MAX_DATA_DIR_FILES = 50_000
+
+
+def data_dir_to_str(data_dir: Path) -> str:
+    all_files = [
+        f.relative_to(data_dir).as_posix() for f in data_dir.glob("**/*") if f.is_file()
+    ]
+
+    s = ""
+
+    if not all_files:
+        return s
+
+    s += f"Data directory: {data_dir.as_posix()}\n"
+
+    if len(all_files) > MAX_DATA_DIR_FILES:
+        s += f"  (showing first {MAX_DATA_DIR_FILES} of {len(all_files)} files)\n"
+
+    file_str = "\n".join(all_files[:MAX_DATA_DIR_FILES])
+    s += file_str + "\n"
+    return s
 
 
 def gen_imports(globals_: dict) -> Generator:
@@ -52,7 +76,7 @@ def is_git_repo():
         return False
 
 
-def warn_git_not_clean(repo_path: Path = cfg.root):
+def fetch_git_status(repo_path: Path = cfg.root) -> list[str]:
     result = subprocess.run(
         ["git", "status", "--porcelain"],
         cwd=repo_path,
@@ -62,21 +86,16 @@ def warn_git_not_clean(repo_path: Path = cfg.root):
     )
 
     lines = result.stdout.split("\n")
-    num_uncommitted = sum(1 for line in lines if line.startswith("??"))
-    num_modified = sum(
-        1 for line in lines if line.startswith(" M") or line.startswith("M ")
-    )
 
-    warnings.warn(
-        f"There are {num_uncommitted} uncommitted and {num_modified} modified files in the git repository."
-    )
+    return lines
 
 
-def reproduce(
+def _reproduce(
     globals_: dict,
     packages: Optional[Iterable[str]] = None,
+    external_data_paths: Optional[dict[str, Path]] = None,
     **watermark_kwargs,
-) -> Path:
+):
     script_path = Path(globals_["__file__"])
     output_path = script_path.parent / "output"
     output_path.mkdir(exist_ok=True, parents=True)
@@ -101,8 +120,8 @@ def reproduce(
     stdlib = {p.stem.replace(".py", "") for p in Path(stdlib_pth).iterdir()}
     combined -= stdlib
 
-    # Remove hal/ava
-    combined -= {"hal", "builtins", "ava"}
+    # Remove hal / builtins
+    combined -= {"hal", "builtins"}
 
     mark_kwargs = dict(
         author="Jochem H. Smit",
@@ -114,12 +133,25 @@ def reproduce(
         machine=True,
     )
 
+    unclean = ""
     if is_git_repo():
         mark_kwargs.update(
             githash=True,
             gitbranch=True,
         )
-        warn_git_not_clean()
+        lines = fetch_git_status()
+        if lines:
+            unclean = "\n".join(lines)
+            counts = {
+                "untracked": sum(1 for line in lines if line.startswith("??")),
+                "modified": sum(1 for line in lines if "M" in line[:2]),
+                "added": sum(1 for line in lines if line.startswith("A ")),
+                "deleted": sum(1 for line in lines if "D" in line[:2]),
+                "renamed": sum(1 for line in lines if line.startswith("R ")),
+            }
+        warnings.warn(
+            f"There are {counts['untracked']} untracked, {counts['modified']} modified, {counts['added']} added, {counts['deleted']} deleted, and {counts['renamed']} renamed files in the git repository."
+        )
 
     mark_kwargs.update(watermark_kwargs)
     mark = watermark.watermark(
@@ -144,6 +176,11 @@ def reproduce(
     for package, version in versions.items():
         mark += f"\n{package}=={version}"
 
+    if unclean:
+        mark += "\n\n"
+        mark += "Git repository is unclean:\n"
+        mark += unclean
+
     # Run the command and capture the output
     freeze = subprocess.run(
         ["uv", "pip", "freeze", "--no-color"],
@@ -156,22 +193,15 @@ def reproduce(
     lines = [line for line in freeze_str.splitlines() if not line.startswith("-e")]
     freeze_no_editable = "\n".join(lines)
 
-    # write to root freeze.txt file
-    if freeze_no_editable:
-        freeze_file = cfg.root / "freeze.txt"
-        with open(freeze_file, "w") as f:
-            f.write("# uv pip freeze output generated at ")
-            f.write(datetime.now().isoformat())
-            f.write("\n")
-            f.write(freeze_no_editable)
+    external_keys = sorted(cfg.paths._used_keys)
+    external_paths = (
+        (external_data_paths or {})
+        | {"_root_data": cfg.root / "data"}
+        | {k: cfg.paths[k] for k in external_keys}
+    )
 
-    if freeze.stderr:
-        freeze_error_file = cfg.root / "freeze_stderr.txt"
-        with open(freeze_error_file, "w") as f:
-            f.write("# uv pip freeze stderr output generated at ")
-            f.write(datetime.now().isoformat())
-            f.write("\n")
-            f.write(freeze.stderr)
+    print("keys in repro")
+    print(external_paths)
 
     script_root = script_path.parent
     with zipfile.ZipFile(
@@ -179,15 +209,58 @@ def reproduce(
     ) as rpr_zip:
         py_files = script_root.glob("**/*.py")
         for f in py_files:
-            rpr_zip.write(f, f.relative_to(script_root))
+            rpr_zip.write(f, Path("scripts") / f.relative_to(script_root))
         rpr_zip.writestr("watermark.txt", mark)
 
-        rpr_zip.writestr("pip_freeze.txt", freeze_str)
+        rpr_zip.writestr("pip_freeze.txt", freeze_no_editable)
         if freeze.stderr:
             rpr_zip.writestr("pip_freeze_error.txt", freeze.stderr)
 
+        # write general use toolbox directory
         toolbox_dir = cfg.root / "ava"
         if toolbox_dir.exists():
             zipdir(toolbox_dir, rpr_zip, root="_ava")
+
+        # write the contents of (external) data directories
+        for k, v in external_paths.items():
+            s = data_dir_to_str(v)
+            if s:
+                rpr_zip.writestr(f"data/{k}/file_list.txt", s)
+
+    return output_path
+
+
+def reproduce(
+    globals_: dict,
+    packages: Optional[Iterable[str]] = None,
+    external_data_paths: Optional[dict[str, Path]] = None,
+    **watermark_kwargs,
+) -> Path:
+    """
+    Reproduce the current script environment by creating a reproducibility package.
+
+    This function collects information about the current script, its dependencies,
+    and the environment, then packages them into a zip file for reproducibility.
+
+    Args:
+        globals_ (dict): The globals dictionary from the calling script.
+        packages (Optional[Iterable[str]]): Additional packages to include.
+        external_data_paths (Optional[dict[str, Path]]): External data directories to include.
+        **watermark_kwargs: Additional keyword arguments for the watermark.
+
+    Returns:
+        Path: The path to the output directory containing the reproducibility package.
+    """
+    script_path = Path(globals_["__file__"])
+    output_path = script_path.parent / "output"
+    output_path.mkdir(exist_ok=True, parents=True)
+
+    atexit.register(
+        _reproduce,
+        globals_=globals_.copy(),
+        packages=packages,
+        external_data_paths=external_data_paths,
+        **watermark_kwargs,
+    )
 
     return output_path
