@@ -1,0 +1,15 @@
+paper:
+  font.family: Arial
+  font.size: 7
+  meta.width: 0.6
+  tick.len: 4
+ppt:
+  font.family: Arial
+  font.size: 25
+  meta.width: 2
+  tick.len: 10
+internal:
+  font.family: Arial
+  font.size: 18
+  meta.width: 1.5
+  tick.len: 7
