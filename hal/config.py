@@ -74,12 +74,17 @@ class MemoryDict(dict, Generic[K, V]):
 
     def __setitem__(self, key: K, value: V) -> None:
         self._check_key(key)
+        self._used_keys.add(key)
         super().__setitem__(key, value)
 
     def __getitem__(self, key: K) -> V:
         self._used_keys.add(key)
         value = super().__getitem__(key)
         return value
+
+    def get(self, key: K, default: Optional[V] = None) -> Optional[V]:
+        self._used_keys.add(key)
+        return super().get(key, default)
 
     def update(self, *args, **kwargs) -> None:
         """Override update to check for reserved keys"""
