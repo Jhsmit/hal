@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from types import ModuleType
 from typing import Generator, Iterable, Optional
+import warnings
 
 import watermark
 
@@ -51,6 +52,26 @@ def is_git_repo():
         return False
 
 
+def warn_git_not_clean(repo_path: Path = cfg.root):
+    result = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    lines = result.stdout.split("\n")
+    num_uncommitted = sum(1 for line in lines if line.startswith("??"))
+    num_modified = sum(
+        1 for line in lines if line.startswith(" M") or line.startswith("M ")
+    )
+
+    warnings.warn(
+        f"There are {num_uncommitted} uncommitted and {num_modified} modified files in the git repository."
+    )
+
+
 def reproduce(
     globals_: dict,
     packages: Optional[Iterable[str]] = None,
@@ -61,7 +82,11 @@ def reproduce(
     output_path.mkdir(exist_ok=True, parents=True)
 
     # get editable packages
-    editable_modules = [f for f in (cfg.root / "editable").iterdir() if f.is_dir()]
+
+    editable_modules = []
+    if (cfg.root / "editable").exists():
+        editable_modules = [f for f in (cfg.root / "editable").iterdir() if f.is_dir()]
+
     pkgs = pkgutil.iter_modules(editable_modules)
     editable_packages = {p.name for p in pkgs}
 
@@ -94,6 +119,7 @@ def reproduce(
             githash=True,
             gitbranch=True,
         )
+        warn_git_not_clean()
 
     mark_kwargs.update(watermark_kwargs)
     mark = watermark.watermark(
@@ -120,7 +146,10 @@ def reproduce(
 
     # Run the command and capture the output
     freeze = subprocess.run(
-        ["uv", "pip", "freeze", "--no-color"], capture_output=True, text=True
+        ["uv", "pip", "freeze", "--no-color"],
+        capture_output=True,
+        text=True,
+        env={**subprocess.os.environ, "NO_COLOR": "1"},  # type: ignore
     )
     freeze_str = freeze.stdout
     # remove editable packages from freeze output
@@ -157,8 +186,8 @@ def reproduce(
         if freeze.stderr:
             rpr_zip.writestr("pip_freeze_error.txt", freeze.stderr)
 
-        toolbox_dir = cfg.root / "ava" / "toolbox"
+        toolbox_dir = cfg.root / "ava"
         if toolbox_dir.exists():
-            zipdir(toolbox_dir, rpr_zip, root="_toolbox")
+            zipdir(toolbox_dir, rpr_zip, root="_ava")
 
     return output_path
