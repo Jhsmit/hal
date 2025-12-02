@@ -261,7 +261,7 @@ def _reproduce(
                 # write the contents of (external) data directories
 
     with zipfile.ZipFile(
-        output_path / f"{script_path.stem}_data_sources.zip", "w", zipfile.ZIP_DEFLATED
+        output_path / f"_data_sources_{script_path.stem}.zip", "w", zipfile.ZIP_DEFLATED
     ) as rpr_zip:
         for k, v in external_paths.items():
             s = data_dir_to_str(v)
