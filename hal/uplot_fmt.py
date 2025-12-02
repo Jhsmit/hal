@@ -3,9 +3,7 @@ import yaml
 
 from hal.config import cfg
 
-uplt_cfg = yaml.safe_load(
-    (cfg.root / "hal" / "fmt" / "ultraplot_presets.yaml").read_text()
-)
+uplt_cfg = yaml.safe_load((cfg.root / "ultraplot_presets.yaml").read_text())
 
 
 def load_uplt_config(preset: str = "paper") -> None:
