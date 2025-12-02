@@ -1,4 +1,5 @@
 import atexit
+import traceback
 import distutils.sysconfig as sysconfig
 import importlib
 import pkgutil
@@ -8,12 +9,18 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 from types import ModuleType
-from typing import Generator, Iterable, Optional
+from typing import Callable, Generator, Iterable, Optional
 import warnings
+import types
+
 
 import watermark
 
 from hal.config import cfg
+
+ExcepthookType = Callable[
+    [type[BaseException], BaseException, types.TracebackType | None], None
+]
 
 
 MAX_DATA_DIR_FILES = 50_000
@@ -90,6 +97,21 @@ def fetch_git_status(repo_path: Path = cfg.root) -> list[str]:
     return lines
 
 
+EXCEPTION: (
+    tuple[type[BaseException], BaseException, types.TracebackType | None] | None
+) = None
+
+
+def excepthook(
+    exec_type: type[BaseException],
+    value: BaseException,
+    traceback: types.TracebackType | None,
+):
+    global EXCEPTION
+    EXCEPTION = (exec_type, value, traceback)
+    sys.__excepthook__(exec_type, value, traceback)
+
+
 def _reproduce(
     globals_: dict,
     packages: Optional[Iterable[str]] = None,
@@ -101,7 +123,6 @@ def _reproduce(
     output_path.mkdir(exist_ok=True, parents=True)
 
     # get editable packages
-
     editable_modules = []
     if (cfg.root / "editable").exists():
         editable_modules = [f for f in (cfg.root / "editable").iterdir() if f.is_dir()]
@@ -200,9 +221,6 @@ def _reproduce(
         | {k: cfg.paths[k] for k in external_keys}
     )
 
-    print("keys in repro")
-    print(external_paths)
-
     script_root = script_path.parent
     with zipfile.ZipFile(
         output_path / "_rpr.zip", "w", zipfile.ZIP_DEFLATED
@@ -225,15 +243,28 @@ def _reproduce(
         for k, v in external_paths.items():
             s = data_dir_to_str(v)
             if s:
-                rpr_zip.writestr(f"data/{k}/file_list.txt", s)
+                rpr_zip.writestr(f"data_files/{k}.txt", s)
 
-    return output_path
+        # Check if script had an exception
+        if EXCEPTION is not None:
+            error_type, error_value, error_traceback = EXCEPTION
+            s = "\n".join(
+                traceback.format_exception(error_type, error_value, error_traceback)
+            )
+
+            with zipfile.ZipFile(
+                output_path / "_rpr.zip", "w", zipfile.ZIP_DEFLATED
+            ) as rpr_zip:
+                rpr_zip.writestr("error.txt", s)
+
+    return
 
 
 def reproduce(
     globals_: dict,
     packages: Optional[Iterable[str]] = None,
     external_data_paths: Optional[dict[str, Path]] = None,
+    excepthook: ExcepthookType | None = excepthook,
     **watermark_kwargs,
 ) -> Path:
     """
@@ -254,6 +285,9 @@ def reproduce(
     script_path = Path(globals_["__file__"])
     output_path = script_path.parent / "output"
     output_path.mkdir(exist_ok=True, parents=True)
+
+    if excepthook is not None:
+        sys.excepthook = excepthook
 
     atexit.register(
         _reproduce,
