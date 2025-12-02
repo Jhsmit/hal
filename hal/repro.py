@@ -219,7 +219,7 @@ def _reproduce(
     external_keys = sorted(cfg.paths._used_keys)
     external_paths = (
         (external_data_paths or {})
-        | {"_root_data": cfg.root / "data"}
+        | {"_root_data": cfg.root / "data", "_output": output_path}
         | {k: cfg.paths[k] for k in external_keys}
     )
 
@@ -261,12 +261,12 @@ def _reproduce(
                 # write the contents of (external) data directories
 
     with zipfile.ZipFile(
-        output_path / "_data_sources.zip", "a", zipfile.ZIP_DEFLATED
+        output_path / f"{script_path.stem}_data_sources.zip", "w", zipfile.ZIP_DEFLATED
     ) as rpr_zip:
         for k, v in external_paths.items():
             s = data_dir_to_str(v)
             if s:
-                rpr_zip.writestr(f"{script_path.stem}/{k}.txt", s)
+                rpr_zip.writestr(f"{k}.txt", s)
 
     return
 
