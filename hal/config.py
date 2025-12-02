@@ -58,7 +58,7 @@ V = TypeVar("V")
 class MemoryDict(dict, Generic[K, V]):
     """dict which keeps track of accessed keys"""
 
-    RESERVED_KEYS = frozenset(["_root_data"])
+    RESERVED_KEYS = frozenset(["_root_data", "_output"])
 
     def __init__(self, *args, **kwargs):
         initial_data = dict(*args, **kwargs)
