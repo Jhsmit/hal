@@ -6,7 +6,6 @@ import pkgutil
 import subprocess
 import sys
 import zipfile
-from datetime import datetime
 from pathlib import Path
 from types import ModuleType
 from typing import Callable, Generator, Iterable, Optional
