@@ -173,6 +173,8 @@ def _reproduce(
         warnings.warn(
             f"There are {counts['untracked']} untracked, {counts['modified']} modified, {counts['added']} added, {counts['deleted']} deleted, and {counts['renamed']} renamed files in the git repository."
         )
+    else:
+        warnings.warn("Current directory is not a git repository.")
 
     mark_kwargs.update(watermark_kwargs)
     mark = watermark.watermark(
@@ -230,20 +232,19 @@ def _reproduce(
             rpr_zip.write(f, Path("scripts") / f.relative_to(script_root))
         rpr_zip.writestr("watermark.txt", mark)
 
-        rpr_zip.writestr("pip_freeze.txt", freeze_no_editable)
+        rpr_zip.writestr("uv_pip_freeze.txt", freeze_no_editable)
         if freeze.stderr:
-            rpr_zip.writestr("pip_freeze_error.txt", freeze.stderr)
+            rpr_zip.writestr("uv_pip_freeze_error.txt", freeze.stderr)
+
+        # copy root lockfile:
+        lockfile = cfg.root / "uv.lock"
+        if lockfile.exists():
+            rpr_zip.write(lockfile, Path("uv.lock"))
 
         # write general use toolbox directory
         toolbox_dir = cfg.root / "ava"
         if toolbox_dir.exists():
-            zipdir(toolbox_dir, rpr_zip, root="_ava")
-
-        # write the contents of (external) data directories
-        for k, v in external_paths.items():
-            s = data_dir_to_str(v)
-            if s:
-                rpr_zip.writestr(f"data_files/{k}.txt", s)
+            zipdir(toolbox_dir, rpr_zip, root="ava")
 
         # Check if script had an exception
         if EXCEPTION is not None:
@@ -256,6 +257,16 @@ def _reproduce(
                 output_path / "_rpr.zip", "w", zipfile.ZIP_DEFLATED
             ) as rpr_zip:
                 rpr_zip.writestr("error.txt", s)
+
+                # write the contents of (external) data directories
+
+    with zipfile.ZipFile(
+        output_path / "_data_sources.zip", "a", zipfile.ZIP_DEFLATED
+    ) as rpr_zip:
+        for k, v in external_paths.items():
+            s = data_dir_to_str(v)
+            if s:
+                rpr_zip.writestr(f"{script_path.stem}/{k}.txt", s)
 
     return
 
