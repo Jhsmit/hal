@@ -1,4 +1,5 @@
 import atexit
+import os
 import traceback
 import distutils.sysconfig as sysconfig
 import importlib
@@ -94,6 +95,15 @@ def fetch_git_status(repo_path: Path = cfg.root) -> list[str]:
     lines = result.stdout.split("\n")
 
     return lines
+
+
+def is_git_clean(repo_path: Path = cfg.root) -> bool:
+    status = (
+        subprocess.check_output(["git", "status", "--porcelain"], cwd=repo_path)
+        .decode()
+        .strip()
+    )
+    return status == ""
 
 
 EXCEPTION: (
@@ -226,8 +236,8 @@ def _reproduce(
     with zipfile.ZipFile(
         output_path / "_rpr.zip", "w", zipfile.ZIP_DEFLATED
     ) as rpr_zip:
-        py_files = script_root.glob("**/*.py")
-        for f in py_files:
+        script_files = script_root.glob("*.*")
+        for f in script_files:
             rpr_zip.write(f, Path("scripts") / f.relative_to(script_root))
         rpr_zip.writestr("watermark.txt", mark)
 
@@ -275,6 +285,7 @@ def reproduce(
     packages: Optional[Iterable[str]] = None,
     external_data_paths: Optional[dict[str, Path]] = None,
     excepthook: ExcepthookType | None = excepthook,
+    load_dotenv: bool = True,
     **watermark_kwargs,
 ) -> Path:
     """
@@ -287,6 +298,8 @@ def reproduce(
         globals_ (dict): The globals dictionary from the calling script.
         packages (Optional[Iterable[str]]): Additional packages to include.
         external_data_paths (Optional[dict[str, Path]]): External data directories to include.
+        excepthook (Optional[ExcepthookType]): Custom exception hook to capture exceptions.
+        load_dotenv (bool): Whether to load environment variables from a .env file.
         **watermark_kwargs: Additional keyword arguments for the watermark.
 
     Returns:
@@ -298,6 +311,26 @@ def reproduce(
 
     if excepthook is not None:
         sys.excepthook = excepthook
+
+    if load_dotenv:
+        try:
+            from dotenv import load_dotenv as _load_dotenv  # type: ignore
+
+            possible_locations = [script_path.parent / ".env", cfg.root / ".env"]
+            for loc in possible_locations:
+                if loc.exists():
+                    _load_dotenv(dotenv_path=loc)
+        except ImportError:
+            warnings.warn(
+                "python-dotenv is not installed. Skipping loading environment variables from .env file."
+            )
+
+    clean = is_git_clean()
+    force_clean = os.getenv("FORCE_CLEAN_GIT", "false").lower() == "true"
+    if not clean and force_clean:
+        raise RuntimeError(
+            "Git working directory is dirty. Commit/stash or set FORCE_CLEAN_GIT=false"
+        )
 
     atexit.register(
         _reproduce,
